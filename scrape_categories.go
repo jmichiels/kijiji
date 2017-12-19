@@ -1,8 +1,6 @@
 package kijiji
 
 import (
-	"context"
-
 	"sort"
 
 	"fmt"
@@ -12,39 +10,8 @@ import (
 	"encoding/json"
 
 	"github.com/jmichiels/tree"
-	cdp "github.com/knq/chromedp"
 	"github.com/pkg/errors"
 )
-
-func withChromeInstance(do func(ctxt context.Context, instance *cdp.CDP) error) error {
-
-	// Create context.
-	ctxt, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Create Chrome instance.
-	instance, err := cdp.New(ctxt)
-	if err != nil {
-		return errors.Wrap(err, "startup chrome")
-	}
-
-	// Run action.
-	if err = do(ctxt, instance); err != nil {
-		return err
-	}
-
-	// Shutdown Chrome.
-	if err := instance.Shutdown(ctxt); err != nil {
-		return errors.Wrap(err, "shutdown chrome")
-	}
-
-	// Wait for Chrome to finish.
-	if err := instance.Wait(); err != nil {
-		return errors.Wrap(err, "wait chrome shutdown")
-	}
-
-	return nil
-}
 
 type CategoryID int
 
