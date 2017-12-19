@@ -1,7 +1,6 @@
 package kijiji
 
 import (
-	"os/exec"
 	"strconv"
 
 	"fmt"
@@ -15,17 +14,19 @@ import (
 
 	"encoding/json"
 
-	"github.com/PuerkitoBio/goquery"
 	"github.com/jmichiels/tree"
 	"github.com/pkg/errors"
 )
 
+// LocationID uniquly identifies a location.
 type LocationID int
 
+// Implements 'encoding.TextMarshaler'.
 func (id LocationID) MarshalText() (text []byte, err error) {
 	return []byte(strconv.Itoa(int(id))), nil
 }
 
+// Implements 'encoding.TextUnmarshaler'.
 func (id *LocationID) UnmarshalText(text []byte) error {
 	idInt, err := strconv.Atoi(string(text))
 	if err != nil {
@@ -35,30 +36,30 @@ func (id *LocationID) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// LocationName holds a location name in English and French.
 type LocationName struct {
 	En, Fr string
 }
 
+// Location represents a location (used in the queries).
 type Location struct {
 	ID     LocationID
 	Name   LocationName
-	Parent *LocationID // nil for root locations.
+	Parent *LocationID // nil for top level locations.
 }
 
+// Implements 'fmt.Stringer'.
 func (location Location) String() string {
 	return fmt.Sprintf("%s (%s, %d)", location.Name.En, location.Name.Fr, location.ID)
 }
 
+// LocationMap represents a map of locations.
 type LocationMap map[LocationID]*Location
 
-const rootLocationUlSelector = `div[class*=locationListContainer] > ul[class*=locationList]`
+// Source for the locations data.
+const sourceLocations = `https://www.kijiji.ca/j-locations.json`
 
-func dumpDOM(url string) ([]byte, error) {
-
-	// Run google chrome in headless mode and dumps the rendered html.
-	return exec.Command(`google-chrome`, `--headless`, `--disable-gpu`, `--dump-dom`, url).Output()
-}
-
+// location JSON as it appears in the source.
 type sourceLocationJSON struct {
 	ID               int                   `json:"id"`
 	NameFr           string                `json:"nameFr"`
@@ -70,13 +71,11 @@ type sourceLocationJSON struct {
 	MigratedLocation bool                  `json:"migratedLocation"`
 }
 
-const pathLocations = `https://www.kijiji.ca/j-locations.json`
-
 // Scrape all locations.
 func ScrapeLocations() (LocationMap, error) {
 
 	// Fetch source of locations.
-	response, err := http.Get(pathLocations)
+	response, err := http.Get(sourceLocations)
 	if err != nil {
 		return nil, errors.Wrap(err, "fetch")
 	}
@@ -130,65 +129,6 @@ func (locations LocationMap) fromSourceJSON(location *sourceLocationJSON, parent
 			locations.fromSourceJSON(child, &id)
 		}
 	}
-}
-
-func (locations *LocationMap) addLocationUl(locale string, ul *goquery.Selection, parent LocationID) (err error) {
-	if ul != nil {
-		// Scrape every children locations li.
-		ul.Children().EachWithBreak(func(i int, li *goquery.Selection) bool {
-			if err = locations.addLocationLi(locale, li, parent); err != nil {
-				return false
-			}
-			return true
-		})
-	}
-	return err
-}
-
-func (locations *LocationMap) addLocationLi(locale string, li *goquery.Selection, parent LocationID) error {
-
-	//// Extract location id.
-	//idStr, exists := li.Attr(`id`)
-	//if !exists {
-	//	return errors.New("missing location id")
-	//}
-	//
-	//// Remove "group" prefix.
-	//idStr = strings.TrimPrefix(idStr, `group-`)
-	//
-	//// Unmarshal id.
-	//var id LocationID
-	//if err := id.UnmarshalText([]byte(idStr)); err != nil {
-	//	return errors.Wrap(err, "unmarshal id")
-	//}
-	//
-	//// Extract location name.
-	//name, exists := li.Find(`a`).Attr(`title`)
-	//if !exists {
-	//	return errors.New("missing location name")
-	//}
-
-	//if location, registered := (*locations)[id]; registered {
-	//	// Location already registered
-	//	if _, named := location.Name[locale]; !named {
-	//		// Add name in current locale.
-	//		location.Name[locale] = name
-	//	}
-	//} else {
-	//	// Register location.
-	//	(*locations)[id] = &Location{
-	//		ID: LocationID(id),
-	//		Name: LocationName{
-	//			// Set name in current locale.
-	//			locale: name,
-	//		},
-	//		Parent: parent,
-	//	}
-	//}
-
-	// Take care of the children.
-	//return locations.addLocationUl(locale, li.Find(`ul`), id)
-	return nil
 }
 
 // ToSlice returns the locations as a slice.
