@@ -10,7 +10,7 @@ import (
 func main() {
 
 	// Scrape locations from the Kijiji homepage.
-	locations, err := kijiji.ScrapeLocations(kijiji.AllLocales)
+	locations, err := kijiji.ScrapeLocations()
 	if err != nil {
 		log.Fatal(err)
 	}
