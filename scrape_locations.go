@@ -6,10 +6,6 @@ import (
 	"fmt"
 	"sort"
 
-	"net/http"
-
-	"io/ioutil"
-
 	"strings"
 
 	"encoding/json"
@@ -74,18 +70,11 @@ type sourceLocationJSON struct {
 // Scrape all locations.
 func ScrapeLocations() (LocationMap, error) {
 
-	// Fetch source of locations.
-	response, err := http.Get(sourceLocations)
+	// Get the locations source.
+	body, err := get(sourceLocations)
 	if err != nil {
-		return nil, errors.Wrap(err, "fetch")
+		return nil, err
 	}
-
-	// Buffer the whole body.
-	bodyBytes, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, errors.Wrap(err, "read")
-	}
-	body := string(bodyBytes)
 
 	// Find the opening brace.
 	openingBrace := strings.IndexByte(body, '{')

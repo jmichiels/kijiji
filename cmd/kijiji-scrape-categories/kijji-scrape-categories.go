@@ -11,7 +11,7 @@ import (
 func main() {
 
 	// Scrape categories from the Kijiji homepage.
-	categories, err := kijiji.ScrapeCategories(kijiji.AllLocales)
+	categories, err := kijiji.ScrapeCategories()
 	if err != nil {
 		log.Fatal(err)
 	}

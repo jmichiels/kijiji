@@ -7,17 +7,14 @@ import (
 
 	"fmt"
 
+	"strings"
+
+	"encoding/json"
+
 	"github.com/jmichiels/tree"
 	cdp "github.com/knq/chromedp"
 	"github.com/pkg/errors"
 )
-
-const (
-	FR = "fr_CA"
-	EN = "en_CA"
-)
-
-var AllLocales = []string{EN, FR}
 
 func withChromeInstance(do func(ctxt context.Context, instance *cdp.CDP) error) error {
 
@@ -51,7 +48,24 @@ func withChromeInstance(do func(ctxt context.Context, instance *cdp.CDP) error) 
 
 type CategoryID int
 
-type CategoryName map[string]string
+type CategoryName struct {
+	En, Fr string
+}
+
+const (
+	localeFr = `fr_CA`
+	localeEn = `en_CA`
+)
+
+// Set the name in the specified locale.
+func (name *CategoryName) set(locale, value string) {
+	switch locale {
+	case localeFr:
+		name.Fr = value
+	case localeEn:
+		name.En = value
+	}
+}
 
 type Category struct {
 	ID     CategoryID
@@ -60,7 +74,7 @@ type Category struct {
 }
 
 func (category Category) String() string {
-	return fmt.Sprintf("%s (%s, %d)", category.Name[EN], category.Name[FR], category.ID)
+	return fmt.Sprintf("%s (%s, %d)", category.Name.En, category.Name.Fr, category.ID)
 }
 
 // IsTopLevel returns if this category is top level.
@@ -68,25 +82,9 @@ func (category Category) IsTopLevel() bool {
 	return category.Parent == 0
 }
 
-// Category as it appears in the original data.
-type windowDataCategory struct {
-	ID       int                   `json:"categoryId"`
-	Name     string                `json:"categoryName"`
-	Children []*windowDataCategory `json:"children"`
-}
-
 type CategoryMap map[CategoryID]*Category
 
-func (categories CategoryMap) TopLevelCategories() CategorySlice {
-	slice := make(CategorySlice, 0)
-	for _, category := range categories {
-		if category.IsTopLevel() {
-			slice = append(slice, category)
-		}
-	}
-	return slice
-}
-
+// ToSlice returns the categories as a slice.
 func (categories CategoryMap) ToSlice() CategorySlice {
 	slice := make(CategorySlice, 0, len(categories))
 	for _, category := range categories {
@@ -97,7 +95,7 @@ func (categories CategoryMap) ToSlice() CategorySlice {
 
 type CategorySlice []*Category
 
-// Returns the categories formatted in an ascii tree.
+// Returns the categories formatted as tree.
 func (categories CategorySlice) FormatTree() string {
 	return tree.String(categories)
 }
@@ -117,86 +115,89 @@ func (categories CategorySlice) ChildrenNodes(parent tree.Node) (children []tree
 	return children
 }
 
+// Sort sorts the categories by increasing ID.
 func (categories CategorySlice) Sort() CategorySlice {
 	sort.Sort(categories)
 	return categories
 }
 
+// Implements 'sort.Interface'.
 func (categories CategorySlice) Len() int {
 	return len(categories)
 }
 
+// Implements 'sort.Interface'.
 func (categories CategorySlice) Less(i, j int) bool {
 	return categories[i].ID < categories[j].ID
 }
 
+// Implements 'sort.Interface'.
 func (categories CategorySlice) Swap(i, j int) {
 	categories[i], categories[j] = categories[j], categories[i]
 }
 
+// Category as it appears in the source.
+type sourceCategoryJSON struct {
+	ID       int                   `json:"categoryId"`
+	Name     string                `json:"categoryName"`
+	Children []*sourceCategoryJSON `json:"children"`
+}
+
 // Adds the data to the categories list.
-func (categories *CategoryMap) add(locale string, data *windowDataCategory, parent CategoryID) {
+func (categories CategoryMap) fromSourceJSON(locale string, source *sourceCategoryJSON, parent CategoryID) {
+	id := CategoryID(source.ID)
 
-	if category, registered := (*categories)[CategoryID(data.ID)]; registered {
-		// The category already registered, just save the name in the current locale.
-		category.Name[locale] = data.Name
-
-	} else {
-		// The category does not registered yet, create it.
-		(*categories)[CategoryID(data.ID)] = &Category{
-			ID: CategoryID(data.ID),
-			Name: CategoryName{
-				// Set name in current locale.
-				locale: data.Name,
-			},
+	category, registered := categories[id]
+	if !registered {
+		// The category is not registered yet, create it.
+		category = &Category{
+			ID:     id,
 			Parent: parent,
 		}
+		categories[id] = category
 	}
+
+	// Save the name in the current locale.
+	category.Name.set(locale, source.Name)
+
 	// Take care of the children.
-	for _, child := range data.Children {
-		categories.add(locale, child, CategoryID(data.ID))
+	for _, child := range source.Children {
+		categories.fromSourceJSON(locale, child, id)
 	}
 }
-
-// chromedp action to go to the homepage.
-func actionGoToHomePage(locale string) cdp.Action {
-	return cdp.Navigate(`https://www.kijiji.ca/?siteLocale=` + locale)
-}
-
-// chromedp tasks list to evaluate a javascript expression on the homepage.
-func taskEvaluate(locale, expression string, data interface{}) cdp.Tasks {
-	return cdp.Tasks{
-		actionGoToHomePage(locale),
-		cdp.WaitReady(`window`),
-		cdp.Evaluate(expression, &data),
-	}
-}
-
-const categoriesExpression = `window.__data.categoryMenu.categories`
 
 // Scrape all the categories.
-func ScrapeCategories(locales []string) (CategoryMap, error) {
+func ScrapeCategories() (CategoryMap, error) {
 	categories := CategoryMap{}
 
-	for _, locale := range locales {
-
-		// Open a Chrome instance.
-		err := withChromeInstance(func(ctxt context.Context, instance *cdp.CDP) error {
-
-			dataCategories := make([]*windowDataCategory, 0)
-			// Scrape `window.__data.categoryMenu.categories` from the Kijiji homepage.
-			if err := instance.Run(ctxt, taskEvaluate(locale, categoriesExpression, &dataCategories)); err != nil {
-				return errors.Wrap(err, "run tasks list")
-			}
-
-			for _, dataCategory := range dataCategories {
-				// Format data in our own way.
-				categories.add(locale, dataCategory, 0)
-			}
-			return nil
-		})
+	for _, locale := range []string{localeEn, localeFr} {
+		// Get the categories source.
+		body, err := get(`https://www.kijiji.ca/?userLocale=fr_CA`)
 		if err != nil {
 			return nil, err
+		}
+
+		// Find the start of the categories array.
+		openingBracket := strings.Index(body, `[{"categoryName":`)
+		if openingBracket < 0 {
+			return nil, errors.New("opening bracket not found")
+		}
+
+		// Find the end of the categories array.
+		closingBracket, err := closingCharIndex(body, openingBracket)
+		if err != nil {
+			return nil, err
+		}
+
+		// Unmarshal JSON from source.
+		var unmarshalled []*sourceCategoryJSON
+		if err := json.Unmarshal([]byte(body[openingBracket:closingBracket+1]), &unmarshalled); err != nil {
+			return nil, errors.Wrap(err, "unmarshal json")
+		}
+
+		for _, category := range unmarshalled {
+			// Add locations to locations map.
+			categories.fromSourceJSON(locale, category, 0)
 		}
 	}
 
